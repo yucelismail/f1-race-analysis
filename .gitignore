@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Data files (too large for git)
+*.csv
+!data/sample_data.csv
+*.pkl
+*.sqlite
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project specific
+cache/
+weather_cache.sqlite
+f1_training_data.csv
+f1_encoders.pkl
+
+# Output files
+output/*.png
+output/*.txt
+!output/.gitkeep
+
+# Documentation
+Makaleler/
+*.pdf
+*.docx
+
+# Database files
+f1db-csv/*.csv
+!f1db-csv/README.md
