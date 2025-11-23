@@ -56,7 +56,7 @@ f1-race-analysis/
 
 ```bash
 # Clone the repository
-git clone https://github.com/ismailyucel/f1-race-analysis.git
+git clone https://github.com/yucelismail/f1-race-analysis.git
 cd f1-race-analysis
 
 # Install dependencies
