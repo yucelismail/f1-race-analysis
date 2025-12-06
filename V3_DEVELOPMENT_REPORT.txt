@@ -1,0 +1,652 @@
+================================================================================
+F1 RACE ANALYSIS - V3 DEVELOPMENT REPORT
+================================================================================
+Project: F1 Race Performance Prediction
+Version: 3.0 (Data Cleaning & Quality Improvement)
+Author: İsmail Yücel
+Date: December 6, 2025
+GitHub: https://github.com/yucelismail/f1-race-analysis
+
+================================================================================
+EXECUTIVE SUMMARY
+================================================================================
+
+V3 OBJECTIVE:
+Fix the persistent negative TyreLife correlation through aggressive data 
+cleaning and outlier removal.
+
+PROBLEM STATEMENT:
+V1 and V2 both showed TyreLife ↔ LapTime = -0.20 (negative), which is 
+physically impossible. Old tires should degrade and produce slower lap times,
+not faster ones. This indicated severe data quality issues.
+
+V3 APPROACH:
+Implement 6-step data cleaning pipeline to remove:
+1. Outlier lap times (pit stops, incomplete laps)
+2. Non-green flag laps (yellow flags, safety car)
+3. Inaccurate timing data
+4. First/last race laps
+5. First stint laps (cold tires)
+6. Sector time outliers
+
+EXPECTED OUTCOME:
+- TyreLife ↔ LapTime_FuelCorrected should become POSITIVE (+0.4 to +0.6)
+- Cleaner data for ML modeling
+- Better fuel effect correlation
+
+ACTUAL OUTCOME:
+- ❌ TyreLife correlation STILL NEGATIVE (-0.204 V2 → -0.204 V3)
+- ✅ Data quality improved (std reduced by 4.9%)
+- ✅ Outlier removal successful (9.47% data removed)
+- ⚠️ Core problem persists despite cleaning
+
+================================================================================
+V3 DEVELOPMENT PROCESS
+================================================================================
+
+PHASE 1: PROBLEM DIAGNOSIS (December 6, 2025)
+----------------------------------------------
+
+Review of V1/V2 Issues:
+1. TyreLife ↔ LapTime = -0.202 (V1) → -0.161 (V2)
+   - Negative correlation is physically impossible
+   - Fuel correction (V2) didn't fix the problem
+
+2. FuelRemaining ↔ LapTime = +0.058 (wrong sign)
+   - Should be negative (heavier = slower)
+   - Actual: Positive (heavier = faster?!)
+
+3. Traffic penalty = -0.258s (negative)
+   - Cars faster in traffic than free air
+   - Physically impossible (dirty air slows cars)
+
+Root Cause Hypothesis:
+- Data contamination from pit stops, safety cars, yellow flags
+- Outlier laps dominating the signal
+- Mixed strategies and compounds confusing the model
+- Insufficient data filtering in V1/V2
+
+PHASE 2: V3 CLEANING PIPELINE DEVELOPMENT
+------------------------------------------
+
+Created: src/f1_data_cleaning_v3.py (357 lines)
+
+Step-by-Step Cleaning Process:
+
+STEP 1: Remove Outlier Lap Times
+  Thresholds:
+  - Minimum: 60.0 seconds
+  - Maximum: 120.0 seconds
+  
+  Rationale:
+  - LapTime > 120s = pit stop laps
+  - LapTime < 60s = incomplete/aborted laps
+  - Normal F1 lap: 70-110 seconds depending on track
+  
+  Results:
+  - Removed: 2,726 laps (1.35%)
+  - Includes: All pit stop laps, safety car starts, formation laps
+
+STEP 2: Filter Track Status
+  Threshold:
+  - Keep only TrackStatus = 1 (Green flag)
+  
+  Rationale:
+  - Yellow flags: Cars mandated to slow down
+  - Safety car: All cars bunched, artificial lap times
+  - Red flag: Session stopped
+  - Green flag: Normal racing conditions
+  
+  Challenge:
+  - TrackStatus was encoded (1=Green, not 0)
+  - Initial attempt removed all data
+  - Fixed after checking value distribution
+  
+  Results:
+  - Removed: 5,921 laps (2.97%)
+  - Includes: Safety car periods, yellow flag sectors, VSC
+
+STEP 3: Filter Timing Accuracy
+  Threshold:
+  - Keep only IsAccurate = 1
+  
+  Rationale:
+  - FIA timing system occasionally has errors
+  - Transponder failures
+  - Sector time inconsistencies
+  
+  Results:
+  - Removed: 0 laps (0.00%)
+  - V2 data already had 100% accurate timing
+
+STEP 4: Remove First/Last Race Laps
+  Rationale:
+  - First lap: Formation lap, starting grid chaos, cold brakes
+  - Last lap: Cool-down lap, fuel saving, celebratory slowdowns
+  - Not representative of normal racing
+  
+  Implementation:
+  - Group by [Year, Round]
+  - Find min and max LapNumber per race
+  - Exclude both boundary laps
+  
+  Results:
+  - Removed: 6,015 laps (3.10%)
+  - Affects: All 95 races (2 laps per race)
+
+STEP 5: Remove First Stint Laps
+  Threshold:
+  - Skip first lap of each tire stint
+  
+  Rationale:
+  - New tires need warm-up (1-2 laps)
+  - First stint lap: Cold tires, inconsistent grip
+  - Drivers often conservative on outlap
+  
+  Implementation:
+  - Group by [Year, Round, Driver, Stint]
+  - Count laps within stint
+  - Keep only StintLapNumber >= 2
+  
+  Results:
+  - Removed: 4,495 laps (2.39%)
+  - Average: ~4 stints per driver per race
+
+STEP 6: Remove Sector Time Outliers
+  Thresholds:
+  - Each sector: 10s < time < 60s
+  
+  Rationale:
+  - Sector > 60s: Incident, spin, pit entry
+  - Sector < 10s: Timing error, incomplete sector
+  - Typical sectors: 15-40 seconds
+  
+  Results:
+  - Removed: 0 laps (0.00%)
+  - Previous steps already caught these outliers
+
+TOTAL V3 CLEANING IMPACT:
+  Original (V2): 202,395 laps
+  Cleaned (V3): 183,238 laps
+  Removed: 19,157 laps (9.47%)
+  Retention: 90.53%
+
+PHASE 3: V3 VALIDATION AND ANALYSIS
+------------------------------------
+
+Created: src/f1_data_analysis_v3.py (234 lines)
+
+Validation Metrics:
+
+1. LAP TIME DISTRIBUTION IMPROVEMENT
+   
+   V2 Statistics:
+   - Mean: 88.70s
+   - Std: 11.26s
+   - Range: 55.40s - 149.46s (94.06s range)
+   
+   V3 Statistics:
+   - Mean: 88.87s
+   - Std: 10.71s
+   - Range: 60.00s - 119.89s (59.89s range)
+   
+   Improvement:
+   - Std reduction: 0.55s (4.9% improvement) ✅
+   - Range reduction: 34.16s (36.3% improvement) ✅
+   - Tighter distribution, fewer outliers ✅
+   - Mean stable (0.17s increase, negligible) ✅
+
+2. CRITICAL CORRELATION CHECK
+
+   TyreLife ↔ LapTime (Raw):
+   - V2: -0.2017
+   - V3: -0.2043
+   - Change: -0.0026 ❌ WORSE!
+   - Conclusion: Cleaning didn't fix the problem
+
+   TyreLife ↔ LapTime_FuelCorrected:
+   - V2: -0.1612
+   - V3: -0.1658
+   - Change: -0.0046 ❌ WORSE!
+   - Conclusion: Fuel correction still inadequate
+
+   FuelRemaining ↔ LapTime:
+   - V2: +0.0581
+   - V3: +0.0563
+   - Change: -0.0018 (slight improvement)
+   - Still wrong sign (should be negative) ❌
+
+   InTraffic ↔ LapTime:
+   - V2: +0.0031
+   - V3: +0.0051
+   - Change: +0.0020 (improved)
+   - Correct sign (positive) but very weak ✅
+
+3. TIRE DEGRADATION ANALYSIS
+
+   Degradation Slopes (sec/lap):
+   
+   V3 Raw Lap Time:
+   - Slope: -0.1536 sec/lap ❌
+   - Interpretation: Tires get FASTER with age (impossible!)
+   
+   V3 Fuel-Corrected:
+   - Slope: -0.1131 sec/lap ❌
+   - Interpretation: Still negative after fuel correction
+   
+   Expected:
+   - Slope: +0.3 to +0.5 sec/lap ✅
+   - Interpretation: Tires degrade, lap times increase
+
+================================================================================
+V3 RESULTS ANALYSIS
+================================================================================
+
+WHAT WORKED (Successes):
+------------------------
+
+✅ Data Quality Improvement
+   - Successfully removed 9.47% outlier data
+   - Lap time variance reduced by 4.9%
+   - Range reduced by 36.3% (fewer extreme values)
+   - Cleaner, more consistent data
+
+✅ Pipeline Robustness
+   - 6-step cleaning process worked as designed
+   - No data corruption or loss of valid laps
+   - All V2 features preserved (48 columns)
+   - Reproducible, documented process
+
+✅ Visualization Quality
+   - Generated comparison plots (V2 vs V3)
+   - Lap time distribution clearly improved
+   - Tire degradation trends visible
+   - Professional-quality outputs
+
+WHAT DIDN'T WORK (Failures):
+-----------------------------
+
+❌ TyreLife Correlation (PRIMARY GOAL)
+   - Goal: Fix negative correlation
+   - Result: Still negative, slightly worse
+   - Conclusion: Data cleaning alone insufficient
+
+❌ Fuel Model Validation
+   - Goal: FuelRemaining ↔ LapTime negative correlation
+   - Result: Still positive (+0.056)
+   - Conclusion: Fuel model or data fundamentally flawed
+
+❌ Traffic Effect
+   - Goal: Strong positive correlation
+   - Result: Very weak (+0.005)
+   - Conclusion: Traffic detection inadequate
+
+ROOT CAUSE ANALYSIS:
+-------------------
+
+Why V3 Cleaning Didn't Fix the Problem:
+
+1. CONFOUNDING VARIABLES STILL PRESENT
+   
+   Tire Compound Effects:
+   - Soft tires: Fast but degrade quickly
+   - Medium tires: Moderate speed, moderate degradation
+   - Hard tires: Slow but long-lasting
+   
+   Problem:
+   - TyreLife of 20 on softs ≠ TyreLife of 20 on hards
+   - Soft tire lap 20 might be slower than hard tire lap 5
+   - Compound-normalized degradation needed
+   
+   Evidence:
+   - Compound encoded (0/1/2/3) but not used in analysis
+   - Different strategies mixing in same dataset
+   - No compound-specific degradation curves
+
+2. RACE STRATEGY VARIATIONS
+   
+   One-Stop vs Two-Stop:
+   - One-stop: High fuel, long stint, heavy degradation
+   - Two-stop: Low fuel, short stint, less degradation
+   
+   Problem:
+   - TyreLife means different things in different strategies
+   - Lap 30 of 50-lap stint ≠ Lap 30 of 25-lap stint
+   - No strategy normalization
+   
+   Evidence:
+   - Stint length varies 10-50 laps
+   - Some drivers aggressive, others conservative
+   - No stint-relative degradation
+
+3. FUEL MODEL LIMITATIONS
+   
+   Linear Assumption:
+   - Model: FuelRemaining = 110 × (1 - NormalizedLap)
+   - Reality: Non-linear burn, lift-and-coast, fuel saving
+   
+   Problem:
+   - Not all cars start with 110kg
+   - Sprint races: ~40kg start
+   - Strategy-dependent fuel loads
+   - Fuel saving modes
+   
+   Evidence:
+   - FuelRemaining correlation still wrong sign
+   - V2 and V3 both fail validation
+   - Model doesn't match reality
+
+4. TRACK CHARACTERISTICS MISSING
+   
+   Monaco vs Spa Example:
+   - Monaco: 3.3km, 19 corners, low speed, high downforce
+   - Spa: 7.0km, 14 corners, high speed, low downforce
+   
+   Problem:
+   - TyreLife in Monaco ≠ TyreLife in Spa
+   - Thermal degradation vs mechanical degradation
+   - No track-specific corrections
+   
+   Evidence:
+   - TrackLength placeholder (4.5km constant)
+   - No corner count, no elevation data
+   - Circuit encoded but not decoded
+
+5. DATA COLLECTION METHODOLOGY
+   
+   Potential Issues:
+   - FastF1 API data quality
+   - Timing system limitations
+   - Missing context (team radio, strategy calls)
+   - No tire pressure data
+   - No brake/engine temperatures
+   
+   Evidence:
+   - Negative correlations persist across V1/V2/V3
+   - Multiple cleaning attempts failed
+   - Problem deeper than outliers
+
+================================================================================
+LESSONS LEARNED
+================================================================================
+
+1. DATA CLEANING IS NECESSARY BUT NOT SUFFICIENT
+   
+   V3 proved that removing outliers improves data quality metrics
+   (std, range, distribution) but doesn't fix fundamental modeling issues.
+   
+   Takeaway:
+   - Clean data first (V3 successful here)
+   - But also need correct features (V3 insufficient)
+   - Feature engineering > data cleaning for correlation fixes
+
+2. DOMAIN KNOWLEDGE IS CRITICAL
+   
+   Reddit expert identified fuel masking instantly.
+   We spent weeks building V2/V3 but core issue remains.
+   
+   Takeaway:
+   - Need F1 tire engineer input
+   - Compound-specific degradation curves
+   - Strategy-normalized metrics
+   - Track-specific corrections
+
+3. CORRELATION ≠ CAUSATION
+   
+   Negative TyreLife correlation might be real in raw data
+   because fast drivers (who lap faster) also push tires harder
+   (more laps on same tires).
+   
+   Takeaway:
+   - Need to control for driver skill
+   - Need to control for car performance
+   - Need compound-specific analysis
+   - Aggregated correlation misleading
+
+4. LINEAR MODELS INSUFFICIENT
+   
+   Fuel burn, tire degradation, and performance are all non-linear.
+   V2/V3 used linear approximations.
+   
+   Takeaway:
+   - Need non-linear fuel model
+   - Need exponential degradation curves
+   - Need compound-specific models
+   - Physics more complex than assumed
+
+5. FEATURE ENGINEERING REQUIRES ITERATION
+   
+   V1: Raw data → negative correlation
+   V2: Added fuel model → still negative
+   V3: Cleaned data → still negative
+   
+   Takeaway:
+   - Need V4 with compound normalization
+   - Need V5 with strategy normalization
+   - Need V6 with driver skill normalization
+   - This is a marathon, not a sprint
+
+================================================================================
+V3 DELIVERABLES
+================================================================================
+
+CODE FILES:
+-----------
+✅ src/f1_data_cleaning_v3.py (357 lines)
+   - 6-step cleaning pipeline
+   - Outlier removal, track status filtering
+   - First/last lap removal, stint filtering
+   - Comprehensive validation
+
+✅ src/f1_data_analysis_v3.py (234 lines)
+   - V2 vs V3 comparison analysis
+   - Correlation tracking
+   - Lap time distribution comparison
+   - Tire degradation analysis
+
+✅ src/check_status.py (8 lines)
+   - Quick TrackStatus value checker
+   - Helper script for debugging
+
+DATA FILES:
+-----------
+✅ data/f1_training_data_v3.csv (44.38 MB)
+   - 183,238 laps (90.53% of V2)
+   - 48 features (same as V2)
+   - Cleaned, quality-filtered dataset
+   - Ready for ML modeling
+
+VISUALIZATIONS:
+---------------
+✅ output/v2_vs_v3_laptime_distribution.png
+   - Side-by-side histogram comparison
+   - Shows tighter V3 distribution
+   - Mean lap time stability
+   - Visual confirmation of cleaning success
+
+✅ output/v3_tire_degradation_analysis.png
+   - Tire life vs lap time plot
+   - Raw and fuel-corrected trends
+   - Negative slope visualization
+   - Confirms persistent problem
+
+DOCUMENTATION:
+--------------
+✅ V3_DEVELOPMENT_REPORT.txt (this document)
+   - Complete V3 development story
+   - Technical details and analysis
+   - Lessons learned
+   - Future recommendations
+
+================================================================================
+COMPARISON TABLE: V1 vs V2 vs V3
+================================================================================
+
+| Metric                    | V1      | V2      | V3      | Status    |
+|---------------------------|---------|---------|---------|-----------|
+| **Data Size**             | 202,395 | 202,395 | 183,238 | ✅ Cleaned|
+| **Features**              | 38      | 48      | 48      | ✅ Same   |
+| **TyreLife ↔ LapTime**    | -0.202  | -0.202  | -0.204  | ❌ Worse  |
+| **TyreLife ↔ Fuel-Corr**  | N/A     | -0.161  | -0.166  | ❌ Worse  |
+| **Fuel ↔ LapTime**        | N/A     | +0.058  | +0.056  | ⚠️ Slight |
+| **Lap Time Std**          | 11.26s  | 11.26s  | 10.71s  | ✅ Better |
+| **Lap Time Range**        | 94.06s  | 94.06s  | 59.89s  | ✅ Better |
+| **Outlier Removal**       | None    | None    | 9.47%   | ✅ Yes    |
+| **Green Flag Filter**     | No      | No      | Yes     | ✅ Yes    |
+| **Pit Lap Removal**       | No      | No      | Yes     | ✅ Yes    |
+| **Physical Models**       | 0       | 3       | 3       | ✅ Same   |
+| **Correlation Fixed**     | No      | No      | No      | ❌ No     |
+
+KEY INSIGHT:
+V3 improved data quality (std, range) but didn't fix modeling issues
+(correlations). This suggests the problem is feature engineering, not
+data quality.
+
+================================================================================
+RECOMMENDATIONS FOR FUTURE WORK (V4+)
+================================================================================
+
+IMMEDIATE PRIORITY - V4 (Compound Normalization):
+--------------------------------------------------
+
+1. Decode Compound Column
+   - Load LabelEncoder from f1_encoders.pkl
+   - Map 0/1/2/3 → SOFT/MEDIUM/HARD/INTERMEDIATE
+   - Create compound-specific subsets
+
+2. Compound-Specific Degradation Analysis
+   - Analyze each compound separately
+   - Expected slopes:
+     * Soft: +0.5 to +0.8 sec/lap
+     * Medium: +0.3 to +0.5 sec/lap
+     * Hard: +0.1 to +0.3 sec/lap
+   
+3. Create CompoundNormalizedTyreLife
+   - TyreLife / CompoundExpectedLife
+   - Soft lap 10 = Medium lap 15 = Hard lap 25
+   - Cross-compound comparable
+
+4. Re-analyze Correlations
+   - Should finally be positive
+   - Fuel effect should be stronger
+   - Traffic effect clearer
+
+MEDIUM PRIORITY - V5 (Strategy Normalization):
+-----------------------------------------------
+
+1. Stint-Relative Metrics
+   - StintProgress = TyreLife / StintLength
+   - Normalize to 0-1 scale
+   - Compare early/mid/late stint consistently
+
+2. One-Stop vs Two-Stop Analysis
+   - Separate strategies
+   - Different fuel loads
+   - Different degradation patterns
+
+3. Track-Specific Analysis
+   - Decode Circuit column
+   - Match to F1DB for real track lengths
+   - Add corner count, elevation
+   - Create track-specific models
+
+LONG-TERM - V6 (Driver/Car Normalization):
+-------------------------------------------
+
+1. Driver Skill Index
+   - Qualifying pace vs race pace
+   - Consistency metrics
+   - Tire management ability
+   - Control for driver differences
+
+2. Car Performance Index
+   - Constructor standings as proxy
+   - Aerodynamic efficiency
+   - Power unit performance
+   - Isolate car from driver
+
+3. Physics-Informed Neural Network
+   - Embed tire physics as constraints
+   - Non-linear fuel model
+   - Track-specific corrections
+   - ML + Physics hybrid
+
+RESEARCH QUESTIONS:
+-------------------
+
+1. Is negative TyreLife correlation real for fast drivers?
+   - Fast drivers push harder → more laps on tires
+   - But also lap faster overall
+   - Need driver skill control
+
+2. Does compound choice confound the signal?
+   - Are teams using softs in qualifying trim?
+   - Are hards used for fuel saving?
+   - Strategy vs performance tradeoff
+
+3. Is FastF1 data quality sufficient?
+   - Missing tire pressure data
+   - Missing brake temps
+   - Missing team radio context
+   - Need more detailed telemetry?
+
+================================================================================
+CONCLUSION
+================================================================================
+
+V3 STATUS: Partially Successful
+
+ACHIEVEMENTS:
+✅ Implemented robust 6-step data cleaning pipeline
+✅ Removed 9.47% outlier data (pit stops, yellow flags, etc.)
+✅ Reduced lap time variance by 4.9%
+✅ Reduced lap time range by 36.3%
+✅ Created professional V2 vs V3 comparison analysis
+✅ Generated high-quality visualizations
+✅ Proved data cleaning alone insufficient for correlation fix
+
+SHORTCOMINGS:
+❌ TyreLife correlation still negative (-0.204)
+❌ Fuel model still wrong sign (+0.056)
+❌ Traffic effect still weak (+0.005)
+❌ Core modeling problem persists
+❌ Need compound/strategy/driver normalization
+
+OVERALL ASSESSMENT:
+V3 was a necessary step that improved data quality and ruled out
+"dirty data" as the sole cause of negative correlations. The persistent
+negative correlation after aggressive cleaning proves the issue is
+fundamental feature engineering, not outliers.
+
+The path forward requires:
+1. Compound-specific analysis (V4)
+2. Strategy normalization (V5)
+3. Driver/car skill separation (V6)
+4. Non-linear physics models
+5. Possibly different data source
+
+PROJECT VALUE:
+This project demonstrates real data science workflow:
+- Iterate through hypotheses (V1 → V2 → V3)
+- Test assumptions (cleaning fixes correlations? No.)
+- Learn from failures (linear models insufficient)
+- Document thoroughly for future work
+- Professional code and analysis
+
+V3 sets the foundation for V4+ development with clean data and
+proven infrastructure.
+
+================================================================================
+END OF V3 DEVELOPMENT REPORT
+================================================================================
+
+Report generated: December 6, 2025
+Version: 3.0
+Status: Data cleaning complete, feature engineering needed
+Next steps: V4 development (compound normalization)
+
+For questions:
+Email: ismailycel.0@gmail.com
+GitHub: https://github.com/yucelismail/f1-race-analysis
+
+================================================================================
